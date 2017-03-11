@@ -1,0 +1,3 @@
+# Breast cancer is considered to be the second leading cause of cancer deaths in women today. One of the main problems is to predict recurrent and non-recurrent events. The goal of this project is to investigate the ability of Naive Bayesian classification methodology in classifying or predicting the problems in Wisconsin Breast Cancer dataset. Naïve Bayes model is compared against other Linear models to see which prediction give better results.
+Comparing the best models of Linear Model and Naive Bayes, Naive Bayes
+provide much superior models with an accuracy of 98% compared to the Linear Model with 89%.
