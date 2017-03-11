@@ -1,0 +1,516 @@
+---
+title: "Breast Cancer data analysis"
+author: "Anu Narendran"
+date: "August 23, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Overview and Summary:
+
+Breast cancer is considered to be the second leading cause of cancer deaths in women today. One of the main problems is to predict recurrent and non-recurrent events. The goal of this project is to investigate the ability of Naive Bayesian classification methodology in classifying or predicting the problems in Wisconsin Breast Cancer dataset. Naïve Bayes model is compared against another Linear model to see which prediction, give better results.
+Comparing the best models of Linear Model and Naive Bayes, Naive Bayes
+provide much superior models with an accuracy of 98% compared to the Linear Model with 89%.
+            
+## Initial set up
+```{r milk, echo=TRUE,warning=FALSE,comment=FALSE, message=FALSE}
+rm(list = ls())
+## Set path
+current_path <- setwd("C:/Users/Anu/Downloads/Data Science/Quarter 2 - Methods for Data Analysis/Project/Breast Cancer")
+
+# Install the necessary packages
+reposURL <- "http://cran.rstudio.com/"
+# install package with naive bayes if not alreay installed
+if (!require("e1071")) {install.packages("e1071", dep=TRUE, repos=reposURL)} else {" e1071 is already installed "}
+# Now that the package is installed, we want to load the package so that we can use its functions
+library(e1071)
+
+
+```
+
+
+## Read the data and take a look at a few records
+
+```{r PART1, echo=TRUE,warning=FALSE,message=FALSE}
+
+path = '.'
+filePath <- file.path(path, 'breast-cancer-wisconsin-data.csv')
+cancer.data <- read.csv(filePath, header = TRUE, 
+                       stringsAsFactors = FALSE)
+head(cancer.data)
+names(cancer.data)
+cols <-names(cancer.data) <- c('id','ct','ucsize','ucshape','ma','secs','bn','bc','nn','miti','class')
+names(cancer.data)
+
+## Summary statistics
+summary(cancer.data) 
+```
+
+## How many benign and malignant cases
+
+```{r PART2, echo=TRUE,warning=FALSE,message=FALSE}
+table(cancer.data$class)
+```
+
+## # clean up the data and remove cases with NULL data
+
+```{r PART3, echo=TRUE,warning=FALSE,message=FALSE}
+
+dim(cancer.data)
+cancer.data <- cancer.data[as.numeric(cancer.data$bn,na.omit=TRUE) < 11,]
+cancer.data <- na.omit(cancer.data)
+cancer.data$class <- as.numeric(cancer.data$class == "2")
+cancer.data$bn <- as.numeric(cancer.data$bn)
+
+
+```
+Observation:
+Data looks clean. There are 16 records under feature 'Bare.Nuclei' which are NULL. Those records are removed before creating the model.
+
+##  Plot the correlations
+Let us will look at the correlations between the variables. The following display shows these correlations.
+
+```{r PART41, echo=TRUE, message=FALSE, comment=FALSE}
+cols <- c("class","ct","ucsize","ucshape","ma","secs","bn","bc","nn","miti")
+cors = cor(cancer.data[, cols], method = 'pearson')
+## Loading required package: corrplot
+require(corrplot)
+
+corrplot.mixed(cors, upper = "ellipse")
+
+```
+
+According to the plots, Uniformity.of.Cell.Size and Uniformity.of.Cell.Shape are highly correlated. All other correlations seem small.
+
+## Funtion for plotting the residual
+
+```{r PART5, echo=TRUE,warning=FALSE,comment=FALSE,message=FALSE}
+
+dist.ts = function(resid, col = 'residual', bins = 40){
+  #  par(mfrow = c(1,2))
+  #  temp = as.vector(df)
+  breaks = seq(min(resid), max(resid), length.out = (bins + 1))
+  hist(resid, breaks = breaks, main = paste('Distribution of ', col), xlab = col)
+  qqnorm(resid, main = paste('Normal Q-Q plot of ', col))
+  #  par(mfrow = c(1,1))
+}
+
+```
+
+
+## Funtion to create a Global Linear Model
+
+```{r PART51, echo=TRUE,warning=FALSE,comment=FALSE,message=FALSE}
+
+model.glm <- function(train.datset,test.dataset,formula)
+{
+  # Create logistic regression
+  glmModel <- glm(formula = formula,family = "binomial",data = train.datset)
+  # Predict the outcomes for the test data. (predict type="response")
+  predictedprobalities.GLM <- predict(glmModel,newdata=test.dataset, type =
+                                        "response" )
+  summary(predictedprobalities.GLM)
+  actual <- ifelse(Test.cancer.data$class =="0", "2-Benign", "4-Malignant")
+  threshold = 0.5
+  #convert the predicted probabilities to predictions using a threshold
+  predicted.GLM <- ifelse(predictedprobalities.GLM < threshold, "2-Benign",
+                          "4-Malignant")
+  
+  #Confusion Matrix for Logistic Regression
+  Model.GLM <-(table(predicted.GLM,actual,dnn = c("Predicted","Actual")))
+  Model.GLM.sensitivity <- Model.GLM[1,1]/(Model.GLM[1,1] +
+                                                 Model.GLM[1,2])
+  Model.GLM.accuracy <- (Model.GLM[1,1] + Model.GLM[2,2])/
+                                   (Model.GLM[1,1] +
+                                      Model.GLM[1,2]+Model.GLM[2,1] +
+                                      Model.GLM[2,2]) 
+  print("Confusion Matrix for GLM Model")
+  print(Model.GLM)
+  print(paste("Sensitivity = ", Model.GLM.sensitivity))
+  print(paste("Accuracy    = ", Model.GLM.accuracy))
+  print(paste("Formula     = ", formula[2],formula[1],formula[3]))
+}
+
+```
+
+##Preparing the test and training data sets
+A large training set helps to give us a good model, but a large validation set increases the significance of the result you report. We need to strike a balance. A reasonable balance is 2/3 training and 1/3 validation. Furthermore, in splitting the data we want the training set to be representative of the general population as far as this particular problem goes. 
+
+We'll do the split by randomly permuting the rows of data, selecting 1/3 for testing and having the rest left for training. Our rows are determined by the id variable.
+
+```{r PART7, echo=TRUE,warning=FALSE,message=FALSE}
+
+# Funtion for partitioning the test and training data set based on the fraction passed as the input
+PartitionExact <- function(dataSet, fractionOfTest)
+{
+  numberOfRows <- nrow(dataSet)
+  
+  quantileValue <- quantile(runif(numberOfRows),fractionOfTest)
+  testFlag <- runif(numberOfRows) <= quantileValue
+  
+  testingData <- dataSet[testFlag, ]
+  trainingData <- dataSet[!testFlag, ]
+  dataSetSplit <- list(trainingData=trainingData, testingData=testingData)
+  
+}
+# Set repeatable random seed. 
+set.seed(4)
+
+# Partition data between training and testing sets
+DataSplit <- PartitionExact(cancer.data, fractionOfTest=0.3) 
+Test.cancer.data <- DataSplit$testingData
+Train.cancer.data <-DataSplit$trainingData
+nrow(Test.cancer.data)
+nrow(Train.cancer.data)
+table(Test.cancer.data$class)
+
+```
+
+##                              GLM Models
+
+# Stepwise Regression  - Model 1 with all features
+Create the first linear model with all the features. Then perform stepwise model selection by AIC.
+
+```{r PART8, echo=TRUE,warning=FALSE,message=FALSE}
+#install.packages("MASS")
+library(MASS)
+#Use stepwise regression to select features  - Model 1 with all features
+formula1 <- class ~ 0 + ct + ucsize + ucshape + ma + secs + bn + bc + nn + miti 
+glmModel1.all <- glm(formula = formula1,family = "binomial",data = Train.cancer.data)
+glm.step1 = stepAIC(glmModel1.all, direction = 'back')
+summary(glm.step1)
+glm.step1$anova
+```
+As per the stepwise regression we found that if we remove the feature 'Uniformity.of.Cell.Shape', we get the best model. Thus the best model is the following:
+class ~ ct + ucsize + ma + secs + bn + bc + nn + miti - 1
+
+## Stepwise Regression  - Model 2 with features suggested by ANOVA
+
+```{r PART9, echo=TRUE,warning=FALSE,message=FALSE}
+formula2 <- class ~ ct + ucsize + ma + secs + bn + bc + nn + miti - 1
+glmModel2 <- glm(formula = formula2,family = "binomial",data = Train.cancer.data)
+glm.step2 = stepAIC(glmModel2, direction = 'both')
+summary(glm.step2)
+glm.step2$anova
+```
+As per the analysis, this model seems to have the best standard deviation and AIC. Thus this is considered as the best model so far. Let us try another model with different set of features.
+
+## Stepwise Regression  - Model 3 with with different features
+
+```{r PART91, echo=TRUE,warning=FALSE,message=FALSE}
+formula3 <- class ~ 0 + ct + ucsize + ucshape + ma  + bn + bc  
+glmModel3 <- glm(formula = formula3,family = "binomial",data = Train.cancer.data)
+glm.step3 = stepAIC(glmModel3, direction = 'both')
+summary(glm.step3)
+glm.step3$anova
+```
+Stepwise regression suggests that if we remove the feature 'Uniformity.of.Cell.Shape' and Marginal.Adhesion from the current model, we get a better model. Thus the next model is the following:
+class ~ ct + ucsize + bn + bc - 1
+## Stepwise Regression  - Model 4 - Better model from Model 3 suggested by ANOVA
+
+```{r PART92, echo=TRUE,warning=FALSE,message=FALSE}
+formula4 <- class ~ ct + ucsize + bn + bc - 1
+glmModel4 <- glm(formula = formula4,family = "binomial",data = Train.cancer.data)
+glm.step4 = stepAIC(glmModel4, direction = 'both')
+summary(glm.step4)
+glm.step4$anova
+```
+Even though this model is better than the previous model from Step 3, the Standard deviation of the residuals and the AIC suggest that the model from Step 2 is the best model.
+## Compare the residuals of all the 4 GLM models
+Let us compare the residuals of all the 4 GLM models analyzed above to see how the plot looks like.
+```{r PART10, echo=TRUE,warning=FALSE,message=FALSE}
+par(mfrow = c(2,2))
+resid <- resid(glm.step1)
+dist.ts(resid,col = "Residual of Model1")
+resid <- resid(glm.step2)
+dist.ts(resid,col = "Residual of Model2")
+resid <- resid(glm.step3)
+dist.ts(resid,col = "Residual of Model3")
+resid <- resid(glm.step4)
+dist.ts(resid,col = "Residual of Model4")
+par(mfrow = c(1,1))
+
+```
+
+Looks like the first and the second models looks better than the third and fourth models.
+
+## Print the Confution Matrix for all the 4 GLM models
+
+```{r PART11, echo=TRUE,warning=FALSE,message=FALSE}
+Model.GLM1<-model.glm(Train.cancer.data,Test.cancer.data,formula1)
+
+Model.GLM2<-model.glm(Train.cancer.data,Test.cancer.data,formula2)
+
+Model.GLM3<-model.glm(Train.cancer.data,Test.cancer.data,formula3)
+
+Model.GLM4<-model.glm(Train.cancer.data,Test.cancer.data,formula4)
+```
+As per the Confustion Matrix, the first model seems to be the best with an accuracy of 89% and Sensitivity of 86% . 
+
+The formula is, 
+class ~ 0 + ct + ucsize + ucshape + ma + secs + bn + bc + nn + miti.
+
+Now let us looks at the Naive Bayes models to see if they provide better models than linear models.
+
+##                              Naive Bayes
+## Funtions to create NB Models
+Given below are funtions to create the best Naive Bayes models based on accuracy and sensitivity.
+
+```{r PART12, echo=TRUE,warning=FALSE,message=FALSE}
+
+# Funtion to create one Naive Bayes models based on the input dataset and formula
+model.naiveBayes <- function(train.datset,test.dataset,formula)
+{
+  
+  # Create Naive Bayes model
+  NaiveModel <- naiveBayes(formula = as.formula(formula),data = train.datset,na.action = na.pass,laplace = 3)
+  # Predict the outcomes for the test data. (predict type="raw")
+  predictedprobalities.Naive <- predict(NaiveModel,newdata = test.dataset, type = "raw")
+  actual <- ifelse(test.dataset$class =="0", "2-Benign", "4-Malignant")
+  threshold = 0.5
+  predicted.NaiveBayes <-ifelse(predictedprobalities.Naive[,1] > threshold, "2-Benign", "4-Malignant")
+  table.NB = cbind(test.dataset,predicted.NaiveBayes,actual, (ifelse(predicted.NaiveBayes == actual,"0","1")) )
+# Add a new column which shows error in prediction   
+  colnames(table.NB)[14] <- "Error"
+  new.table.NB.error = table.NB[which(table.NB$Error == '1'),]
+  table <-table(predicted.NaiveBayes,actual,dnn = c("Predicted","Actual"))
+}
+
+# Funtion to find the best Naive Bayes Model based on Accuracy
+model.naiveBayes.best.accuracy <- function(train.datset1,test.dataset1)
+{
+  library(simpleboot)
+  
+  current.model <-NULL
+  best.model.accuracy     <- 0
+  best.model.sensitivity  <- 0
+  best.model.specificity  <- 0
+  best.model <- NULL
+  
+    ## Find the feature names
+  varnames <- names(train.datset1)[2:9]
+  
+  for (k in 1:length(varnames)) {
+   combs = combn(varnames, k) # Find all k-wise combination
+   ncombs <-ncol(combs)
+
+    # find the total number of k element wise combinations and create
+    # formulas for each of the list
+   
+   for(j in 1:ncombs)
+   {
+      varlist <- combs[,j]
+   
+#  Create formula based on the varlist
+      formula1 <-paste(names(train.datset1)[11], "~ " )
+      for (i in varlist) {
+        formula1 <-paste(formula1, i," + " )
+      }
+      formula1 <-paste(formula1, 0)
+      # Create the new model using the formula
+      current.model<- model.naiveBayes(train.datset =
+                                         train.datset1,test.dataset =
+                                         test.dataset1,formula=formula1)
+      # Calculate accuracy of the current model and compare it with the
+      # best model so far
+      # Accuracy = (TN + TP)/(TN+TP+FN+FP) = (Number of correct
+      #             assessments)/Number of all assessments)
+      current.model.accuracy <- (current.model[1,1] + current.model[2,2])/
+                                   (current.model[1,1] + current.model[1,2]
+                                    + current.model[2,1] +
+                                      current.model[2,2])
+      current.model.sensitivity <- current.model[1,1]/(current.model[1,1] +
+                                                         current.model[2,1])
+      
+      current.model.specificity <- current.model[2,2]/(current.model[2,2] +
+                                                         current.model[1,2])
+      
+      
+      if(current.model.accuracy > best.model.accuracy)
+      {
+        best.model <- current.model
+        best.model.accuracy <-current.model.accuracy
+        best.model.sensitivity <-current.model.sensitivity
+        best.model.specificity <-current.model.specificity
+        best.formula <-formula1
+      }
+   }
+  }
+    print("Best model based on Accuracy")
+    print(best.model)
+    print(best.formula)
+    print(paste("Accuracy    :",best.model.accuracy))
+    print(paste("Sensitivity :",best.model.sensitivity))
+    print(paste("Specificity :",best.model.specificity))
+}
+  
+
+# Funtion to find the best Naive Bayes Model based on Sensitivity  
+model.naiveBayes.best.sensitivity <- function(train.datset1,test.dataset1)
+{
+  library(simpleboot)
+  
+  current.model <-NULL
+  best.model.accuracy     <- 0
+  best.model.sensitivity  <- 0
+  best.model.specificity  <- 0
+  best.model <- NULL
+  
+  ## Find the feature names
+  varnames <- names(train.datset1)[2:9]
+  
+  for (k in 1:length(varnames)) {
+    combs = combn(varnames, k) # Find all k-wise combination
+    ncombs <-ncol(combs)
+ # find the total number of k element wise combinations and create formulas
+ # for each of the list  
+    for(j in 1:ncombs)
+    {
+      varlist <- combs[,j]
+      #  Create formula based on the varlist
+      formula1 <-paste(names(train.datset1)[11], "~ " )
+      for (i in varlist) {
+        formula1 <-paste(formula1, i," + " )
+      }
+      formula1 <-paste(formula1, 0)
+      # Create the new model using the formula
+      current.model<- model.naiveBayes(train.datset =
+                                         train.datset1,test.dataset =
+                                         test.dataset1,formula=formula1)
+      # Calculate sensitivity of the current model and compare it with the
+      # best model so far
+      # Sensitivity = TP/(TP + FN) = (Number of true positive
+      #               assessment)/(Number of all positive assessment)
+
+
+      current.model.accuracy <- (current.model[1,1] + current.model[2,2])/
+                                   (current.model[1,1] + current.model[1,2]
+                                    + current.model[2,1] +
+                                      current.model[2,2])
+      current.model.sensitivity <- current.model[1,1]/(current.model[1,1] +
+                                                         current.model[2,1])
+      current.model.specificity <- current.model[2,2]/(current.model[2,2] +
+                                                         current.model[1,2])
+      
+      
+      if(current.model.sensitivity > best.model.sensitivity)
+      {
+        best.model <- current.model
+        best.model.accuracy <-current.model.accuracy
+        best.model.sensitivity <-current.model.sensitivity
+        best.model.specificity <-current.model.specificity
+        best.formula <-formula1
+      }
+    }
+  }
+  print("Best model based on Sensitivity")
+  print(best.model)
+  print(best.formula)
+  print(paste("Accuracy    :",best.model.accuracy))
+  print(paste("Sensitivity :",best.model.sensitivity))
+  print(paste("Specificity :",best.model.specificity))
+}
+
+# Funtion to find the best Naive Bayes Model based on Specificity  
+model.naiveBayes.best.specificity <- function(train.datset1,test.dataset1)
+{
+  library(simpleboot)
+  
+  current.model <-NULL
+  best.model.accuracy     <- 0
+  best.model.sensitivity  <- 0
+  best.model.specificity  <- 0
+  best.model <- NULL
+  
+  ## Find the feature names
+  varnames <- names(train.datset1)[2:9]
+  
+  for (k in 1:length(varnames)) {
+    combs = combn(varnames, k) # Find all k-wise combination
+    ncombs <-ncol(combs)
+ # find the total number of k element wise combinations and create formulas
+ # for each of the list  
+    for(j in 1:ncombs)
+    {
+      varlist <- combs[,j]
+      #  Create formula based on the varlist
+      formula1 <-paste(names(train.datset1)[11], "~ " )
+      for (i in varlist) {
+        formula1 <-paste(formula1, i," + " )
+      }
+      formula1 <-paste(formula1, 0)
+      # Create the new model using the formula
+      current.model<- model.naiveBayes(train.datset =
+                                         train.datset1,test.dataset =
+                                         test.dataset1,formula=formula1)
+      # Calculate sensitivity of the current model and compare it with the
+      # best model so far
+      #Specificity = TN/(TN + FP) = (Number of true negative
+      #               assessment)/(Number of all negative assessment)
+
+      current.model.accuracy <- (current.model[1,1] + current.model[2,2])/
+                                   (current.model[1,1] + current.model[1,2]
+                                    + current.model[2,1] +
+                                      current.model[2,2])
+      
+      current.model.sensitivity <- current.model[1,1]/(current.model[1,1] +
+                                                         current.model[2,1])
+      
+      current.model.specificity <- current.model[2,2]/(current.model[2,2] +
+                                                         current.model[1,2])
+      
+      if(current.model.specificity > best.model.specificity)
+      {
+        best.model <- current.model
+        best.model.accuracy <-current.model.accuracy
+        best.model.sensitivity <-current.model.sensitivity
+        best.model.specificity <-current.model.specificity
+        best.formula <-formula1
+      }
+    }
+  }
+  print("Best model based on Specificity")
+  print(best.model)
+  print(best.formula)
+  print(paste("Accuracy    :",best.model.accuracy))
+  print(paste("Sensitivity :",best.model.sensitivity))
+  print(paste("Specificity :",best.model.specificity))
+
+  }
+```
+
+## Best Naive Bayes model based on Sensitivity, Specificity and Accuracy
+Sensitivity is the proportion of true positives that are correctly
+identified by a diagnostic test. It shows how good the test is at detecting a disease. Specificity is the proportion of the true negatives correctly identified by a diagnostic test. It suggests how good the test is at identifying normal(negative) condition. Accuracy is the proportion of true results, either true positive or true negative, in a population. It measures the degree of veracity of a diagnostic test on a condition.
+
+The numerical values of sensitivity represents the probability of a
+diagnostic test identifies patients who do in fact have the disease. The higher the numerical value of sensitivity, the less likely diagnostic test returns false-positive results. For example, if sensitivity = 99%, it means: when we conduct a diagnostic test on a patient with certain disease, there is 99% of chance, this patient will be identified as positive. A test with high sensitivity tents to capture all possible positive conditions without missing anyone. Thus a test with high sensitivity is often used to screen
+for disease.
+
+```{r PART13, echo=TRUE,warning=FALSE,message=FALSE}
+# Best Naive Bayes Model based on Sensitivity
+Model.best.NB.sensitivity <- model.naiveBayes.best.sensitivity(train.datset1 = Train.cancer.data,test.dataset1 = Test.cancer.data)
+
+# Best Naive Bayes Model based on Specificity
+Model.best.NB.specificity <- model.naiveBayes.best.specificity(train.datset1 = Train.cancer.data,test.dataset1 = Test.cancer.data)
+
+# Best Naive Bayes Model based on Accuracy
+Model.best.NB.accuracy <- model.naiveBayes.best.accuracy(train.datset1 = Train.cancer.data,test.dataset1 = Test.cancer.data)
+
+```
+Conclusion : 
+
+Given the models with best sensitivity, specificity and accuracy we choose the one with best sensitivity and then the next factor as accuracy. The sensitivity of a clinical test refers to the ability of the test to correctly identify those patients with the disease. A test with 100% sensitivity correctly identifies all patients with the disease. A test with 80% sensitivity detects 80% of patients with the disease (true positives) but 20% with the disease go undetected (false negatives). 
+
+Comparing the best models of Linear Model and Naive Bayes, Naive Bayes
+provide superior models than the Linear Model.
+
+Thus the best Naive Bayes model is,
+class ~  ct  +  ucsize  +  ucshape  +  bn  +  nn  +  0
+It has an Accuracy of 98% , Sensitivity of 97% and Specificity of 98%.
+
+
+
